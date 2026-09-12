@@ -1,0 +1,94 @@
+# Example config for score_candidates, compute_demand_gap, and tag_topics -
+# copy the relevant section into your own tool call (see README.md
+# Quickstart for a runnable example). Every value here matches the shape
+# and demo-niche values already shipped and audited in the sibling repo
+# this engine is drawn from (svx2027/yt-competitor-swipe), reused for
+# consistency rather than invented fresh.
+
+# Opportunity Score weights (sum to 100). Pass under "weights" in the
+# `config` argument to score_candidates.
+weights:
+  vph: 35                 # views per hour (primary signal)
+  outlier: 25             # views vs channel's own expected pace
+  engagement: 15          # comment/like velocity z-scores (comment-weighted)
+  demand_gap: 10          # rising query with weak/stale supply
+  convergence: 10         # 3+ competitors on a subtopic within the window
+  calendar: 5             # always 0 in this scaffold - no calendar-tailwind
+                          # tool is exposed yet, see README "Honest scope"
+
+relation_weights:
+  direct: 1.0
+  indirect: 0.8
+  self: 0.0               # your own uploads score 0 in the ranking
+
+engagement_subweights:
+  comment_vph_z: 0.50
+  like_vph_z: 0.30
+  eng_rate_z: 0.20
+
+convergence:
+  min_cluster_size: 3
+  window_hours: 48
+  cluster_max_df: 0.4
+
+# NOTE: this block mixes keys read by two different tools - copying the
+# whole thing into one tool call is safe (the other tool's keys are
+# silently ignored, never an error), but only the keys that tool actually
+# reads have any effect.
+flags:
+  # read by score_candidates (config.flags.*)
+  breakout_outlier_min: 2.0
+  hot_engagement_z_min: 1.5
+  # read by compute_demand_gap (as its own demand_gap_min_score /
+  # demand_gap_max_competition arguments, not nested under "flags" there)
+  demand_gap_min_score: 55
+  demand_gap_max_competition: 32
+
+# Domain words kept as cluster anchors even when they appear in most titles
+# (a subject or product-line word is still a meaningful subtopic anchor).
+# Demo niche: home-fitness gear reviews.
+niche:
+  cluster_anchor_tokens:
+    - "kettlebell"
+    - "dumbbell"
+    - "barbell"
+    - "rack"
+    - "bench"
+    - "cardio"
+    - "treadmill"
+    - "rower"
+    - "yoga"
+    - "mobility"
+    - "recovery"
+    - "bands"
+    - "budget"
+    - "guide"
+    - "deal"
+    - "flooring"
+    - "plates"
+
+# Demo keyword universe for compute_demand_gap when you have no vidIQ (or
+# equivalent) data to pass as `vidiq_keywords`.
+keywords:
+  - "budget kettlebell"
+  - "power rack buying guide"
+  - "home gym setup"
+  - "recovery gear review"
+  - "gym equipment review"
+
+# Demo topic taxonomy for tag_topics: most specific hints first, "misc" as
+# the final catch-all. Rename labels deliberately if you adapt this - any
+# ledger or dashboard you build on top will key on them.
+taxonomy:
+  - label: strength-training-gear
+    hints: ["kettlebell", "dumbbell", "barbell", "power rack", "squat rack", "weight bench", "weight plate", "adjustable dumbbell", "resistance band"]
+  - label: cardio-equipment
+    hints: ["treadmill", "rowing machine", "exercise bike", "elliptical", "jump rope", "cardio machine", "air bike"]
+  - label: recovery-and-mobility
+    hints: ["foam roller", "massage gun", "mobility drill", "stretching routine", "recovery tool", "percussion massager"]
+  - label: buying-guides
+    hints: ["buying guide", "how to choose", "best budget", " vs ", "comparison", "which one should you buy", "worth it"]
+  - label: deals-and-drops
+    hints: ["deal", "discount", "sale", "coupon", "price drop"]
+  - label: misc
+    hints: []

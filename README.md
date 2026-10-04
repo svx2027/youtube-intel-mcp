@@ -123,14 +123,20 @@ imports cleanly, registers exactly the four tools above, and — the one that
 actually proves it works as an MCP server, not just as importable Python —
 answers a real call routed through `mcp`'s own `call_tool` dispatch path.
 
-## Related
+## Related tools
 
-Drawn from [yt-competitor-swipe](https://github.com/svx2027/yt-competitor-swipe)'s
-`src/score.py`, `src/keyword_demand.py`, and `src/taxonomy.py` — that repo
-runs the full pipeline this engine was built for (fetch, score, report,
-dashboard) end to end against a real niche. This repo exists for the case
-where you already have the candidate data and just want the scoring and
-tagging logic as a callable tool, from any MCP client.
+- [yt-competitor-swipe](https://github.com/svx2027/yt-competitor-swipe):
+  drawn from that repo's `src/score.py`, `src/keyword_demand.py`, and
+  `src/taxonomy.py` — it runs the full pipeline this engine was built for
+  (fetch, score, report, dashboard) end to end against a real niche. This
+  repo exists for the case where you already have the candidate data and
+  just want the scoring and tagging logic as a callable tool, from any
+  MCP client.
+- [yt-competitor-outlier-pipeline](https://github.com/svx2027/yt-competitor-outlier-pipeline):
+  a different, keyless take on competitor outlier detection for a single
+  channel, if you need the fetch layer too.
+
+Full index of all public repos: [github.com/svx2027](https://github.com/svx2027).
 
 ## License
 

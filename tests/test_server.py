@@ -52,5 +52,70 @@ class TestServerImports(unittest.TestCase):
         self.assertEqual(structured["meta"]["n_candidates"], 2)
 
 
+class TestTransportCli(unittest.TestCase):
+    """--transport is the knob between the default stdio path (what
+    test_call_tool_through_real_mcp_dispatch above exercises) and Streamable
+    HTTP (exercised for real, over an actual socket, in
+    demo/http_client_demo.py - see demo/session_transcript.txt for a
+    captured run). These tests cover the CLI parsing and settings wiring
+    without binding a port, since mcp.run() blocks forever once started.
+    """
+
+    def test_default_transport_is_stdio(self):
+        import sys
+        import server
+        # Parse with no argv at all, the real default path.
+        old_argv = sys.argv
+        try:
+            sys.argv = ["server.py"]
+            args = server._parse_args()
+        finally:
+            sys.argv = old_argv
+        self.assertEqual(args.transport, "stdio")
+        self.assertEqual(args.host, "127.0.0.1")
+        self.assertEqual(args.port, 8000)
+
+    def test_streamable_http_flags_parse(self):
+        import sys
+        import server
+        old_argv = sys.argv
+        try:
+            sys.argv = ["server.py", "--transport", "streamable-http",
+                        "--host", "0.0.0.0", "--port", "9100"]
+            args = server._parse_args()
+        finally:
+            sys.argv = old_argv
+        self.assertEqual(args.transport, "streamable-http")
+        self.assertEqual(args.host, "0.0.0.0")
+        self.assertEqual(args.port, 9100)
+
+    def test_apply_transport_args_sets_settings_only_for_network_transport(self):
+        import argparse
+        import server
+
+        fresh = server.FastMCP("test-apply")
+        stdio_args = argparse.Namespace(transport="stdio", host="9.9.9.9", port=1)
+        server._apply_transport_args(fresh, stdio_args)
+        # stdio ignores host/port entirely - no reason to mutate settings
+        # a stdio run will never read.
+        self.assertEqual(fresh.settings.host, "127.0.0.1")
+        self.assertEqual(fresh.settings.port, 8000)
+
+        http_args = argparse.Namespace(transport="streamable-http", host="0.0.0.0", port=9100)
+        server._apply_transport_args(fresh, http_args)
+        self.assertEqual(fresh.settings.host, "0.0.0.0")
+        self.assertEqual(fresh.settings.port, 9100)
+
+    def test_streamable_http_app_exposes_mcp_route(self):
+        # No socket, no network: this just confirms the ASGI app the real
+        # server would serve under --transport streamable-http actually
+        # mounts the /mcp path the README and demo/http_client_demo.py
+        # both point clients at.
+        import server
+        app = server.mcp.streamable_http_app()
+        paths = {getattr(r, "path", None) for r in app.routes}
+        self.assertIn(server.mcp.settings.streamable_http_path, paths)
+
+
 if __name__ == "__main__":
     unittest.main()

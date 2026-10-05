@@ -11,12 +11,17 @@ Data API, calls vidIQ and Gemini, and writes a committed report + ledger.
 See README.md "Honest scope" for the full list of what this scaffold does
 not do (yet).
 
-Run it:
+Run it over stdio (the default, for a desktop MCP client):
     pip install -r requirements.txt
     python3 server.py
+
+Run it over Streamable HTTP (for a remote/web MCP client):
+    python3 server.py --transport streamable-http --port 8000
+    # client connects to http://127.0.0.1:8000/mcp
 """
 from __future__ import annotations
 
+import argparse
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -136,5 +141,31 @@ def cluster_titles(titles: list[str], anchor_tokens: list[str] | None = None,
     return scoring.cluster_titles(titles, anchor_tokens, max_df=max_df)
 
 
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--transport", choices=["stdio", "streamable-http", "sse"], default="stdio",
+        help="stdio (default, for a local desktop client) or streamable-http "
+             "(for a remote/web client; listens on --host:--port, path /mcp)",
+    )
+    parser.add_argument("--host", default="127.0.0.1",
+                         help="bind host for --transport streamable-http/sse (default 127.0.0.1)")
+    parser.add_argument("--port", type=int, default=8000,
+                         help="bind port for --transport streamable-http/sse (default 8000)")
+    return parser.parse_args()
+
+
+def _apply_transport_args(server: FastMCP, args: argparse.Namespace) -> None:
+    """Push --host/--port onto the server's settings for a network transport.
+    Split out from __main__ so the CLI wiring is testable without actually
+    binding a socket or blocking on mcp.run().
+    """
+    if args.transport != "stdio":
+        server.settings.host = args.host
+        server.settings.port = args.port
+
+
 if __name__ == "__main__":
-    mcp.run()
+    args = _parse_args()
+    _apply_transport_args(mcp, args)
+    mcp.run(transport=args.transport)

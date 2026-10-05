@@ -44,8 +44,43 @@ pip install -r requirements.txt
 python3 server.py
 ```
 
-That starts the server on stdio, ready for an MCP client to connect. To
-call a tool without any MCP client at all — every tool is also a plain,
+That starts the server on stdio, ready for a desktop MCP client (Claude
+Desktop, Claude Code) to connect.
+
+### Streamable HTTP, for a remote or web client
+
+```bash
+python3 server.py --transport streamable-http --port 8000
+```
+
+A client now connects over HTTP at `http://127.0.0.1:8000/mcp` instead of
+spawning the process on stdio — the same four tools, same inputs and
+outputs, different transport. `demo/http_client_demo.py` is a real MCP
+client exercising this end to end (initialize → list tools → call
+`score_candidates`) over an actual socket; `demo/session_transcript.txt` is
+a captured run of it against exactly the command above, if you want to see
+the exchange without starting anything yourself:
+
+```bash
+# terminal 1
+python3 server.py --transport streamable-http --port 8000
+# terminal 2
+python3 demo/http_client_demo.py
+```
+
+**No hosted demo endpoint.** The natural next step — a Vercel (or
+equivalent) deployment of this ASGI app so you can point a client at a URL
+with nothing running locally — isn't live. The build environment this repo
+is maintained from has outbound network access to GitHub, PyPI and npm
+only; every hosting provider tried (Vercel, Fly.io, Render, Railway,
+Cloudflare Workers, ngrok, Hugging Face Spaces) is blocked at the network
+policy layer, not by anything about the app itself. `mcp.streamable_http_app()`
+returns a standard Starlette ASGI app (`server.mcp.streamable_http_app()`),
+so deploying it anywhere that runs Python ASGI apps is the same exercise as
+deploying any other FastAPI/Starlette service — nothing in this repo is
+Vercel-specific or missing for that step.
+
+To call a tool without any MCP client at all — every tool is also a plain,
 directly callable Python function:
 
 ```python
@@ -105,9 +140,12 @@ This is a scaffold: the four tools above, not the full pipeline.
 - **No sleeper / new-format history signals.** Both depend on a multi-day
   ledger this stateless server doesn't keep. Not exposed; not silently
   half-implemented.
-- **No live deployment.** This is a stdio MCP server you run yourself
-  (`python3 server.py`), the same as most local MCP servers; no hosted
-  endpoint exists.
+- **No hosted deployment.** Streamable HTTP transport works (see
+  Quickstart), so a client can reach it over a network instead of spawning
+  it on stdio — but there's no URL to point at yet; you still run the
+  process yourself, just on `--transport streamable-http` instead of
+  stdio. See the Quickstart section for exactly why no hosted endpoint is
+  live and what deploying one would take.
 
 ## Tests
 
@@ -115,13 +153,16 @@ This is a scaffold: the four tools above, not the full pipeline.
 python3 -m unittest discover -s tests -v
 ```
 
-44 tests, no network calls: the scoring math (z-scores, outlier fallback
+48 tests, no network calls: the scoring math (z-scores, outlier fallback
 order, local clustering, the blended score under custom weights), the
 demand-gap signal (including the "alignment alone never flags" rule), rule-
-based tagging, and a set of server smoke tests confirming the MCP server
+based tagging, a set of server smoke tests confirming the MCP server
 imports cleanly, registers exactly the four tools above, and — the one that
 actually proves it works as an MCP server, not just as importable Python —
-answers a real call routed through `mcp`'s own `call_tool` dispatch path.
+answers a real call routed through `mcp`'s own `call_tool` dispatch path,
+plus the `--transport` CLI parsing and settings wiring for Streamable HTTP
+(the HTTP transport itself is exercised over a real socket in
+`demo/http_client_demo.py`, not in this no-network suite — see Quickstart).
 
 ## Related tools
 

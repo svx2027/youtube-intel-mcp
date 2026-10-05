@@ -1,0 +1,48 @@
+Recorded session: a real MCP client calling youtube-intel-mcp over Streamable
+HTTP, captured 2026-10-05. Reproduce with the two commands below (see
+demo/http_client_demo.py for what the client script does).
+
+This is a straight capture of two terminals: the server's stdout/stderr, and
+the client's stdout. Nothing here is edited for effect.
+
+================================================================================
+Terminal 1: python3 server.py --transport streamable-http --port 8000
+================================================================================
+INFO:     Started server process [1812]
+INFO:     Waiting for application startup.
+StreamableHTTP session manager started
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+Created new transport with session ID: 10b95253aebf4a94a4c4333d937b804d
+INFO:     127.0.0.1:47578 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47592 - "POST /mcp HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:47596 - "GET /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47602 - "POST /mcp HTTP/1.1" 200 OK
+Processing request of type ListToolsRequest
+INFO:     127.0.0.1:47618 - "POST /mcp HTTP/1.1" 200 OK
+Processing request of type CallToolRequest
+Terminating session: 10b95253aebf4a94a4c4333d937b804d
+INFO:     127.0.0.1:47634 - "DELETE /mcp HTTP/1.1" 200 OK
+
+================================================================================
+Terminal 2: python3 demo/http_client_demo.py
+================================================================================
+Connecting to http://127.0.0.1:8000/mcp ...
+Initialized session with server: youtube-intel-mcp 1.30.0
+Server advertises 4 tools: ['cluster_titles', 'compute_demand_gap', 'score_candidates', 'tag_topics']
+
+Calling score_candidates with 3 sample candidates ...
+Got 3 scored candidates back, ranked by opportunity_score:
+   35.80  Kettlebell workout for beginners
+   19.90  5 resistance band mistakes everyone makes
+   12.50  Best kettlebell for beginners
+
+Session closed cleanly. This was a real HTTP round trip, not an in-process call.
+================================================================================
+
+What this proves: the server's HTTP transport performs a real MCP session
+(initialize -> list_tools -> call_tool -> session teardown) over actual
+sockets on 127.0.0.1, matching the request sequence the Streamable HTTP spec
+defines (session-scoped POSTs, a GET for the server-initiated stream, and a
+final DELETE to terminate the session) -- not a mock, and not the stdio path
+exercised by this repo's existing tests/test_server.py.

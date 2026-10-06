@@ -34,6 +34,40 @@ with a typed, documented interface instead of "go read score.py."
 Full argument shapes and return values are in each tool's docstring in
 `server.py` (also what an MCP client sees when it lists tools).
 
+## 60-second walkthrough
+
+Clone to a scored result, no MCP client, no API key, no network call:
+
+```bash
+git clone https://github.com/svx2027/youtube-intel-mcp.git && cd youtube-intel-mcp   # ~5s
+python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt  # ~30s on a warm pip cache
+python3 -c "
+from server import score_candidates
+result = score_candidates([
+    {'title': 'Best kettlebell for beginners', 'vph': 12.0, 'channel_id': 'c1', 'relation': 'direct'},
+    {'title': 'Kettlebell workout for beginners', 'vph': 400.0, 'channel_id': 'c2', 'relation': 'direct'},
+])
+for c in result['candidates']:
+    print(round(c['opportunity_score'], 1), c['title'])
+"
+```
+
+Output (verified by actually running the three commands above against this
+exact commit, not hand-typed):
+
+```
+30.0 Kettlebell workout for beginners
+12.5 Best kettlebell for beginners
+```
+
+Same two titles, same views-per-hour shape a real competitor scan would
+hand you; the one with 33x the velocity comes back ranked first with a
+higher score. That loop — titles and a velocity number in, a ranked
+Opportunity Score out — is the whole server. Everything past this point is
+either running it as a long-lived MCP server instead of a one-off Python
+call (next section), or the full argument/config shape (`config.example.yaml`,
+each tool's docstring in `server.py`).
+
 ## Quickstart
 
 ```bash
@@ -45,7 +79,68 @@ python3 server.py
 ```
 
 That starts the server on stdio, ready for a desktop MCP client (Claude
-Desktop, Claude Code) to connect.
+Desktop, Claude Code) to connect — see "Connect it to a client" below for
+the exact config for each.
+
+### Connect it to a client
+
+Both of these point a client at the venv's own interpreter rather than a
+bare `python3`, so the server starts with its dependencies even if the
+client's own process never sourced `.venv/bin/activate`. Swap in your own
+absolute paths (`pwd` after the `cd` above gives you the repo path).
+
+**Claude Desktop** — edit the config file for your OS and add an entry
+under `mcpServers`, then restart Claude Desktop:
+
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+- Linux: `~/.config/Claude/claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "youtube-intel": {
+      "command": "/absolute/path/to/youtube-intel-mcp/.venv/bin/python3",
+      "args": ["/absolute/path/to/youtube-intel-mcp/server.py"]
+    }
+  }
+}
+```
+
+**Claude Code** — one CLI command, no restart needed (it's read at the
+start of the next session, and you'll be prompted to approve a new
+project-scoped server the first time):
+
+```bash
+claude mcp add --scope project youtube-intel -- \
+  /absolute/path/to/youtube-intel-mcp/.venv/bin/python3 \
+  /absolute/path/to/youtube-intel-mcp/server.py
+```
+
+That writes a `.mcp.json` in the current directory; editing it directly is
+equivalent:
+
+```json
+{
+  "mcpServers": {
+    "youtube-intel": {
+      "type": "stdio",
+      "command": "/absolute/path/to/youtube-intel-mcp/.venv/bin/python3",
+      "args": ["/absolute/path/to/youtube-intel-mcp/server.py"]
+    }
+  }
+}
+```
+
+`--scope project` shares the server with anyone who clones the repo
+`.mcp.json` lands in; use `--scope user` instead for a server available to
+you across every project, or `--scope local` (the default) to keep it
+private to this one project and out of version control.
+
+Either client now lists `score_candidates`, `compute_demand_gap`,
+`tag_topics`, and `cluster_titles` as tools it can call directly in
+conversation — no code, no terminal, just asking it to score a list of
+titles.
 
 ### Streamable HTTP, for a remote or web client
 
@@ -80,20 +175,9 @@ so deploying it anywhere that runs Python ASGI apps is the same exercise as
 deploying any other FastAPI/Starlette service — nothing in this repo is
 Vercel-specific or missing for that step.
 
-To call a tool without any MCP client at all — every tool is also a plain,
-directly callable Python function:
-
-```python
-from server import score_candidates
-
-result = score_candidates([
-    {"title": "Best kettlebell for beginners", "vph": 12.0,
-     "channel_id": "c1", "relation": "direct"},
-    {"title": "Kettlebell workout for beginners", "vph": 400.0,
-     "channel_id": "c2", "relation": "direct"},
-])
-print(result["candidates"][0]["title"], result["candidates"][0]["opportunity_score"])
-```
+To call a tool without any MCP client at all, every tool is also a plain,
+directly callable Python function — see the "60-second walkthrough" above
+for a runnable example and its real output.
 
 `config.example.yaml` has the full weights/thresholds/taxonomy shape each
 tool accepts — copy the section you need into your own call, or load the

@@ -18,6 +18,7 @@ Run it over stdio (the default, for a desktop MCP client):
 Run it over Streamable HTTP (for a remote/web MCP client):
     python3 server.py --transport streamable-http --port 8000
     # client connects to http://127.0.0.1:8000/mcp
+    # rate-limited by default: see --rate-limit-* flags and README
 """
 from __future__ import annotations
 
@@ -26,7 +27,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from src import demand, scoring, taxonomy
+from src import demand, ratelimit, scoring, taxonomy, validation
 
 mcp = FastMCP(
     "youtube-intel-mcp",
@@ -66,6 +67,9 @@ def score_candidates(candidates: list[dict[str, Any]],
     Returns {"candidates": [...sorted by opportunity_score desc...],
     "meta": {"n_candidates": int, "cluster_method": "local"}}.
     """
+    validation.validate_candidates(candidates)
+    validation.require_optional_dict(config, "config")
+    validation.validate_str_number_map(baselines, "baselines")
     return scoring.score_candidates(candidates, config, baselines)
 
 
@@ -94,6 +98,11 @@ def compute_demand_gap(candidates: list[dict[str, Any]], keywords: list[str],
     candidates straight into score_candidates() to fold demand_gap_score
     into the blended Opportunity Score.
     """
+    validation.validate_candidates(candidates)
+    validation.validate_string_list(keywords, "keywords")
+    validation.validate_vidiq_keywords(vidiq_keywords)
+    validation.require_number(demand_gap_min_score, "demand_gap_min_score")
+    validation.require_number(demand_gap_max_competition, "demand_gap_max_competition")
     annotated = demand.annotate_candidates(
         list(candidates), keywords, vidiq_keywords,
         demand_gap_min_score, demand_gap_max_competition,
@@ -119,6 +128,9 @@ def tag_topics(candidates: list[dict[str, Any]], taxonomy_labels: list[dict[str,
 
     Returns the candidates list, each with a "topic" key set.
     """
+    validation.validate_candidates(candidates)
+    validation.validate_taxonomy(taxonomy_labels)
+    validation.validate_str_str_map(session_labels, "session_labels")
     return taxonomy.tag_candidates(list(candidates), taxonomy_labels, session_labels)
 
 
@@ -138,6 +150,12 @@ def cluster_titles(titles: list[str], anchor_tokens: list[str] | None = None,
     Returns clusters sorted largest-first: [{"label": str, "indices": [int,
     ...]}, ...], where each index refers back into the input `titles` list.
     """
+    validation.validate_string_list(titles, "titles")
+    if anchor_tokens is not None:
+        validation.validate_string_list(anchor_tokens, "anchor_tokens")
+    validation.require_number(max_df, "max_df")
+    if not 0.0 <= max_df <= 1.0:
+        raise ValueError(f"max_df must be between 0 and 1, got {max_df}")
     return scoring.cluster_titles(titles, anchor_tokens, max_df=max_df)
 
 
@@ -152,6 +170,21 @@ def _parse_args() -> argparse.Namespace:
                          help="bind host for --transport streamable-http/sse (default 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8000,
                          help="bind port for --transport streamable-http/sse (default 8000)")
+    parser.add_argument(
+        "--rate-limit-max-requests", type=int, default=120,
+        help="max HTTP requests per client IP per window, for --transport "
+             "streamable-http (default 120). Ignored for stdio: a local "
+             "subprocess has no client IP to rate-limit.",
+    )
+    parser.add_argument(
+        "--rate-limit-window-seconds", type=float, default=60.0,
+        help="window size in seconds for --rate-limit-max-requests (default 60).",
+    )
+    parser.add_argument(
+        "--disable-rate-limit", action="store_true",
+        help="turn off rate limiting on --transport streamable-http. It is on "
+             "by default, so there is no matching --enable flag.",
+    )
     return parser.parse_args()
 
 
@@ -165,7 +198,40 @@ def _apply_transport_args(server: FastMCP, args: argparse.Namespace) -> None:
         server.settings.port = args.port
 
 
+def _build_http_app(server: FastMCP, args: argparse.Namespace) -> Any:
+    """Build the Streamable HTTP ASGI app, wrapped in the rate limiter
+    unless --disable-rate-limit was passed. Split out from __main__ so it
+    is testable (see tests/test_ratelimit.py) without binding a socket.
+    """
+    app = server.streamable_http_app()
+    if args.disable_rate_limit:
+        return app
+    limiter = ratelimit.FixedWindowRateLimiter(
+        args.rate_limit_max_requests, args.rate_limit_window_seconds)
+    return ratelimit.RateLimitASGIMiddleware(app, limiter)
+
+
+def _run_streamable_http(server: FastMCP, args: argparse.Namespace) -> None:  # pragma: no cover
+    """Run Streamable HTTP via uvicorn directly rather than server.run():
+    FastMCP's own run_streamable_http_async() builds the app and serves it
+    with no hook for wrapping it in middleware first, so inserting the rate
+    limiter means driving uvicorn ourselves here, the same way that method
+    does internally (see its source for the equivalent unwrapped call).
+    """
+    import uvicorn
+
+    app = _build_http_app(server, args)
+    config = uvicorn.Config(
+        app, host=server.settings.host, port=server.settings.port,
+        log_level=server.settings.log_level.lower(),
+    )
+    uvicorn.Server(config).run()
+
+
 if __name__ == "__main__":
     args = _parse_args()
     _apply_transport_args(mcp, args)
-    mcp.run(transport=args.transport)
+    if args.transport == "streamable-http":
+        _run_streamable_http(mcp, args)
+    else:
+        mcp.run(transport=args.transport)

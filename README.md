@@ -148,6 +148,21 @@ titles.
 python3 server.py --transport streamable-http --port 8000
 ```
 
+Rate-limited by default: at most 120 HTTP requests per 60 seconds per
+client IP (`--rate-limit-max-requests` / `--rate-limit-window-seconds` to
+change either, `--disable-rate-limit` to turn it off). Stdio has no flag
+for this at all — it is one local subprocess talking to one local client
+over pipes, with no client IP to throttle in the first place, so there is
+nothing for a rate limiter to do there. An HTTP endpoint is different: it
+is reachable over a socket, so an unbounded one is a real
+resource-exhaustion vector the moment `--host` is anything other than
+`127.0.0.1`. Going over the limit gets a plain `429` with a JSON body
+(`{"error": "rate_limited", "retry_after_seconds": ...}`) and a
+`Retry-After` header — see `src/ratelimit.py` for the limiter itself (an
+in-memory, per-process fixed-window counter; it resets on restart and
+isn't shared across workers, which is disclosed there rather than silently
+assumed away).
+
 A client now connects over HTTP at `http://127.0.0.1:8000/mcp` instead of
 spawning the process on stdio — the same four tools, same inputs and
 outputs, different transport. `demo/http_client_demo.py` is a real MCP
@@ -203,6 +218,15 @@ plain argument here, or a signal this scaffold doesn't expose yet (see
 below) — a deliberate trade for a server any client can call without first
 setting up that engine's full repo layout.
 
+Every tool validates its own input first (`src/validation.py`) — list vs.
+dict, string vs. number, a batch-size cap (5000 items) — before any of it
+reaches `scoring.py`/`demand.py`/`taxonomy.py`, which are written to trust
+their caller and default a missing field rather than defend against a
+malformed one. A bad call gets a clean MCP tool error naming the exact
+field and index, not a raw traceback from deep inside the scoring math, and
+an oversized batch is rejected outright rather than silently burning CPU
+and memory on an unbounded list.
+
 ## Honest scope
 
 This is a scaffold: the four tools above, not the full pipeline.
@@ -230,6 +254,14 @@ This is a scaffold: the four tools above, not the full pipeline.
   process yourself, just on `--transport streamable-http` instead of
   stdio. See the Quickstart section for exactly why no hosted endpoint is
   live and what deploying one would take.
+- **The rate limiter is in-memory and per-process, not production-grade.**
+  It resets on restart, isn't shared across multiple worker processes, and
+  trusts `scope["client"]` as-is with no `X-Forwarded-For` handling — correct
+  for running this server directly, not for running it behind a proxy
+  without that proxy doing its own real-IP handling first. Good enough to
+  stop a single client from flooding a scaffold server with no auth ahead
+  of it; not a substitute for a real gateway's rate limiting if you deploy
+  this at any real scale.
 
 ## Tests
 
@@ -237,15 +269,19 @@ This is a scaffold: the four tools above, not the full pipeline.
 python3 -m unittest discover -s tests -v
 ```
 
-48 tests, no network calls: the scoring math (z-scores, outlier fallback
+108 tests, no network calls: the scoring math (z-scores, outlier fallback
 order, local clustering, the blended score under custom weights), the
 demand-gap signal (including the "alignment alone never flags" rule), rule-
-based tagging, a set of server smoke tests confirming the MCP server
-imports cleanly, registers exactly the four tools above, and — the one that
-actually proves it works as an MCP server, not just as importable Python —
-answers a real call routed through `mcp`'s own `call_tool` dispatch path,
-plus the `--transport` CLI parsing and settings wiring for Streamable HTTP
-(the HTTP transport itself is exercised over a real socket in
+based tagging, input validation (every malformed-input case `src/validation.py`
+rejects, plus the same cases routed through each real tool function and
+through `mcp`'s own `call_tool` dispatch to confirm a caller gets a clean
+tool error, not a traceback), the rate limiter (the fixed-window counter's
+allow/block/reset behavior, and the ASGI middleware's 429 response over a
+hand-built scope/receive/send — no real socket needed for this), a set of
+server smoke tests confirming the MCP server imports cleanly and registers
+exactly the four tools above, plus the `--transport` CLI parsing and
+settings wiring for Streamable HTTP (the HTTP transport itself, rate
+limiter included, is exercised over a real socket in
 `demo/http_client_demo.py`, not in this no-network suite — see Quickstart).
 
 ## Related tools

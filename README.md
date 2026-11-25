@@ -68,6 +68,42 @@ either running it as a long-lived MCP server instead of a one-off Python
 call (next section), or the full argument/config shape (`config.example.yaml`,
 each tool's docstring in `server.py`).
 
+**Note on this specific example:** both candidates above come back with
+`outlier: 1.0` (check `score_components` on the returned dict and you'll
+see `outlier: 20.0` on both, not driving the gap between them at all — the
+`vph` percentile and `engagement` components do all the work here). That's
+the no-`baselines` fallback (`outlier_source: "same-run"`) computing each
+channel's median from the batch itself, and with exactly one candidate per
+channel, a channel's median *is* its own single value — so `vph / median`
+is always `1.0`, for every candidate, regardless of how extreme its views-
+per-hour actually is. The outlier signal only tells you anything once you
+either pass real per-channel history in `baselines`, or score a batch with
+2+ candidates per channel. Same two candidates, with a `baselines` map
+(each channel's own recent-upload median VPH, computed however you like):
+
+```bash
+python3 -c "
+from server import score_candidates
+candidates = [
+    {'title': 'Best kettlebell for beginners', 'vph': 12.0, 'channel_id': 'c1', 'relation': 'direct'},
+    {'title': 'Kettlebell workout for beginners', 'vph': 400.0, 'channel_id': 'c2', 'relation': 'direct'},
+]
+result = score_candidates(candidates, baselines={'c1': 10.0, 'c2': 25.0})
+for c in result['candidates']:
+    print(round(c['opportunity_score'], 1), c['title'], '- outlier', c['outlier'])
+"
+```
+
+```
+50.0 Kettlebell workout for beginners - outlier 16.0
+13.5 Best kettlebell for beginners - outlier 1.2
+```
+
+Same inputs, same code — the only change is a real baseline per channel —
+and the top score jumps from 30.0 to 50.0 because the outlier component can
+finally see that 400 vph is 16x that channel's own norm, not just high in
+this batch of two.
+
 ## Quickstart
 
 ```bash
@@ -248,6 +284,17 @@ This is a scaffold: the four tools above, not the full pipeline.
 - **No sleeper / new-format history signals.** Both depend on a multi-day
   ledger this stateless server doesn't keep. Not exposed; not silently
   half-implemented.
+- **The outlier signal needs either a real `baselines` map or 2+ candidates
+  per channel in the batch.** Call `score_candidates` with neither (see the
+  60-second walkthrough's own first example) and every candidate's outlier
+  multiple comes back exactly `1.0`: with no stored baseline, this stateless
+  server's only fallback is each channel's median VPH *within the current
+  batch*, and a channel contributing a single candidate is its own median
+  by definition. The other components (`vph` percentile, `engagement`) still
+  do real work in that case; the outlier component just goes silently inert
+  rather than erroring, which is easy to miss. Pass `baselines` (each
+  channel's own recent-upload median VPH, computed however you fetch your
+  history) whenever you can.
 - **No hosted deployment.** Streamable HTTP transport works (see
   Quickstart), so a client can reach it over a network instead of spawning
   it on stdio — but there's no URL to point at yet; you still run the
